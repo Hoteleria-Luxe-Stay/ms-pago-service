@@ -1,0 +1,27 @@
+# IntelliJ
+.idea/
+*.iml
+out/
+
+# Maven
+target/
+
+# Logs
+*.log
+
+#Eclipse
+.classpath
+.project
+.settings/
+.factorypath
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+*.env
+
+# Node (por si usas frontend)
+node_modules/
+dist/
