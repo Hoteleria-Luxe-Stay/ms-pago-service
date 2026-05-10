@@ -23,6 +23,25 @@
         <openapi.generator.version>7.6.0</openapi.generator.version>
         <spring-cloud.version>2024.0.1</spring-cloud.version>
         <mercadopago.version>2.9.2</mercadopago.version>
+
+        <!-- ==================== PLUGIN VERSIONS (CI/CD) ==================== -->
+        <plugin-jacoco.version>0.8.12</plugin-jacoco.version>
+        <plugin-surefire.version>3.5.0</plugin-surefire.version>
+        <plugin-sonar.version>4.0.0.4121</plugin-sonar.version>
+
+        <!-- ==================== SONARQUBE CONFIG ==================== -->
+        <sonar.projectKey>pago-service</sonar.projectKey>
+        <sonar.projectName>Luxe Stay - Pago Service</sonar.projectName>
+        <sonar.coverage.exclusions>
+            **/config/**,
+            **/api/**,
+            **/dto/**,
+            **/*Application.*,
+            **/target/**
+        </sonar.coverage.exclusions>
+        <sonar.coverage.jacoco.xmlReportPaths>
+            ${project.basedir}/target/site/jacoco/jacoco.xml
+        </sonar.coverage.jacoco.xmlReportPaths>
     </properties>
 
     <dependencies>
@@ -55,6 +74,19 @@
         <dependency>
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-starter-config</artifactId>
+        </dependency>
+
+        <!-- Circuit Breaker + Retry (Resilience4j) — protege llamadas al SDK de
+             MercadoPago. Si la MP API se ralentiza (>30s) o falla, el CB abre
+             y los siguientes calls reciben fail-fast via fallback method en
+             vez de bloquear el thread esperando timeout del SDK. -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-circuitbreaker-resilience4j</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.github.resilience4j</groupId>
+            <artifactId>resilience4j-spring-boot3</artifactId>
         </dependency>
 
         <!-- Kafka producer -->
@@ -152,6 +184,78 @@
                         </exclude>
                     </excludes>
                 </configuration>
+            </plugin>
+
+            <!-- ==================== JACOCO — code coverage ==================== -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>${plugin-jacoco.version}</version>
+                <configuration>
+                    <excludes>
+                        <exclude>**/config/**</exclude>
+                        <exclude>**/api/**</exclude>
+                        <exclude>**/dto/**</exclude>
+                        <exclude>**/target/**</exclude>
+                        <exclude>**/*Application.*</exclude>
+                    </excludes>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>test-report</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>jacoco-check</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <rule>
+                                    <element>BUNDLE</element>
+                                    <limits>
+                                        <limit>
+                                            <counter>LINE</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>0.80</minimum>
+                                        </limit>
+                                    </limits>
+                                </rule>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- ==================== SUREFIRE — JUnit runner ==================== -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>${plugin-surefire.version}</version>
+                <configuration>
+                    <includes>
+                        <include>**/*Test.java</include>
+                        <include>**/*Tests.java</include>
+                    </includes>
+                    <failIfNoTests>true</failIfNoTests>
+                </configuration>
+            </plugin>
+
+            <!-- ==================== SONARQUBE — static analysis ==================== -->
+            <plugin>
+                <groupId>org.sonarsource.scanner.maven</groupId>
+                <artifactId>sonar-maven-plugin</artifactId>
+                <version>${plugin-sonar.version}</version>
             </plugin>
         </plugins>
     </build>

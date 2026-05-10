@@ -17,6 +17,8 @@ import com.mercadopago.exceptions.MPApiException;
 import com.mercadopago.exceptions.MPException;
 import com.mercadopago.resources.payment.Payment;
 import com.mercadopago.resources.preference.Preference;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import io.github.resilience4j.retry.annotation.Retry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -61,6 +63,11 @@ public class MercadoPagoGateway implements PaymentGateway {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(MercadoPagoGateway.class);
     private static final String GATEWAY_NAME = "MERCADOPAGO";
+    /**
+     * Nombre del CircuitBreaker + Retry configurados en pago-service.yml
+     * (resilience4j.circuitbreaker.instances.cb-mercadopago + retry idem).
+     */
+    private static final String CB_NAME = "cb-mercadopago";
 
     private static final String STATUS_APPROVED = "approved";
     private static final String STATUS_REJECTED = "rejected";
@@ -100,6 +107,8 @@ public class MercadoPagoGateway implements PaymentGateway {
     // =========================================================================
 
     @Override
+    @CircuitBreaker(name = CB_NAME, fallbackMethod = "fallbackCreateCheckoutSession")
+    @Retry(name = CB_NAME)
     public CheckoutSessionResult createCheckoutSession(CheckoutSessionRequest req) {
         try {
             // pagoId del metadata se usa como external_reference para correlacionar
@@ -183,6 +192,8 @@ public class MercadoPagoGateway implements PaymentGateway {
     // =========================================================================
 
     @Override
+    @CircuitBreaker(name = CB_NAME, fallbackMethod = "fallbackVerifyAndResolveWebhook")
+    @Retry(name = CB_NAME)
     public WebhookEventResult verifyAndResolveWebhook(String payload, Map<String, String> headers) {
         LOGGER.warn("[DIAG-WEBHOOK] payload={} headers={}", payload, headers);
 
@@ -372,5 +383,40 @@ public class MercadoPagoGateway implements PaymentGateway {
             }
         }
         return null;
+    }
+
+    // =========================================================================
+    //  FALLBACK METHODS (Resilience4j)
+    //  Disparados cuando el CB esta OPEN (fail-fast inmediato sin esperar
+    //  timeout del SDK), o cuando @Retry se queda sin intentos. Reciben el
+    //  Throwable de la ultima invocacion fallida.
+    //
+    //  Signature contract: mismo return + mismos params + Throwable al final.
+    // =========================================================================
+
+    @SuppressWarnings("unused") // invocado por reflection desde Resilience4j
+    private CheckoutSessionResult fallbackCreateCheckoutSession(CheckoutSessionRequest req,
+                                                                 Throwable t) {
+        LOGGER.error("[CB-FALLBACK] createCheckoutSession fallo o CB abierto: {}",
+                t.getMessage());
+        throw new PagoGatewayException(GATEWAY_NAME,
+                "MercadoPago no disponible temporalmente — intenta nuevamente en unos segundos", t);
+    }
+
+    @SuppressWarnings("unused") // invocado por reflection desde Resilience4j
+    private WebhookEventResult fallbackVerifyAndResolveWebhook(String payload,
+                                                                Map<String, String> headers,
+                                                                Throwable t) {
+        // HMAC invalido NO es falla del downstream — propagar tal cual para que
+        // el controller responda 4xx y MP NO reintente un payload firmado mal.
+        if (t instanceof WebhookValidationException) {
+            throw (WebhookValidationException) t;
+        }
+        // Slow call / MP API caida / network: respondemos 5xx via PagoGatewayException
+        // para que MP reintente el webhook segun su politica de retries (espaciada).
+        LOGGER.error("[CB-FALLBACK] verifyAndResolveWebhook fallo o CB abierto: {}",
+                t.getMessage());
+        throw new PagoGatewayException(GATEWAY_NAME,
+                "No se pudo resolver estado del payment con MercadoPago — el webhook sera reintentado", t);
     }
 }
