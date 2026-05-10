@@ -1,0 +1,131 @@
+// =============================================================================
+// Pipeline declarativo - ms-pago (branch main)
+// Sistema de Reserva Hotelera Luxe Stay
+//
+// Stages:
+//   1. Tests & Coverage (JaCoCo)  -> mvn clean verify
+//   2. SonarQube Analysis          -> mvn sonar:sonar
+//   3. Quality Gate                -> waitForQualityGate
+//   4. Build Image                 -> docker build + push a Docker Hub (darfelio)
+//   5. Deploy Application          -> SSH al backend, docker compose pull/up
+// =============================================================================
+
+pipeline {
+    agent any
+
+    tools {
+        jdk 'jdk-21'
+        maven 'maven-3.9'
+    }
+
+    environment {
+        // ==================== APP ====================
+        // SERVICE_NAME = nombre del servicio en docker-compose del backend
+        //                (ej: 'pago-service', NO 'ms-pago')
+        // IMAGE_NAME   = repo name en Docker Hub (== Maven artifactId)
+        SERVICE_NAME = 'pago-service'
+        IMAGE_NAME   = 'pago-service'
+        IMAGE_TAG    = "${env.BUILD_NUMBER}"
+
+        // ==================== DOCKER HUB ====================
+        DOCKERHUB_NAMESPACE = 'darfelio'
+        DOCKERHUB_CREDS     = 'dockerhub-darfelio'
+
+        // ==================== SONARQUBE ====================
+        SONAR_SERVER       = 'LuxeSonar'
+        SONAR_PROJECT_KEY  = 'pago-service'
+        SONAR_PROJECT_NAME = 'Luxe Stay - Pago Service'
+
+        // ==================== BACKEND DEPLOY ====================
+        BACKEND_HOST    = '129.151.111.51'
+        BACKEND_USER    = 'ubuntu'
+        BACKEND_COMPOSE = '/home/ubuntu/luxe-stay/oracle-prod/backend'
+        SSH_CRED_ID     = 'ssh-key-backend'
+    }
+
+    options {
+        timeout(time: 30, unit: 'MINUTES')
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+
+    stages {
+
+        stage('🧪 Tests & Coverage (JaCoCo)') {
+            steps {
+                sh 'mvn -B clean verify'
+            }
+            post {
+                always {
+                    junit testResults: '**/target/surefire-reports/*.xml', allowEmptyResults: true
+                    jacoco execPattern: '**/target/jacoco.exec',
+                           classPattern: '**/target/classes',
+                           sourcePattern: '**/src/main/java',
+                           exclusionPattern: '**/api/**,**/dto/**,**/config/**,**/*Application.*'
+                }
+            }
+        }
+
+        stage('🔍 SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv("${SONAR_SERVER}") {
+                    sh """
+                        mvn -B sonar:sonar \
+                            -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
+                            -Dsonar.projectName='${SONAR_PROJECT_NAME}'
+                    """
+                }
+            }
+        }
+
+        stage('🚦 Quality Gate') {
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
+        stage('🔨 Build Image') {
+            steps {
+                script {
+                    docker.withRegistry('https://index.docker.io/v1/', "${DOCKERHUB_CREDS}") {
+                        def img = docker.build("${DOCKERHUB_NAMESPACE}/${IMAGE_NAME}:${IMAGE_TAG}")
+                        img.push()
+                        img.push('latest')
+                    }
+                }
+            }
+        }
+
+        stage('🚀 Deploy Application') {
+            // ACTIVADO. SSH al backend, pull image fresca de Docker Hub, recrear container.
+            // Solo corre si los stages anteriores pasaron (Tests + Sonar + QualityGate + BuildImage).
+            steps {
+                sshagent(credentials: ["${SSH_CRED_ID}"]) {
+                    sh """
+                        ssh -o StrictHostKeyChecking=no ${BACKEND_USER}@${BACKEND_HOST} bash <<'REMOTE'
+set -e
+cd ${BACKEND_COMPOSE}
+docker compose pull ${SERVICE_NAME}
+docker compose up -d ${SERVICE_NAME}
+echo "Deploy ${SERVICE_NAME} OK"
+REMOTE
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            cleanWs()
+        }
+        success {
+            echo "✅ Pipeline ${env.SERVICE_NAME} build #${env.BUILD_NUMBER} OK"
+        }
+        failure {
+            echo "❌ Pipeline ${env.SERVICE_NAME} build #${env.BUILD_NUMBER} FAILED — revisar logs del stage que rompio"
+        }
+    }
+}
