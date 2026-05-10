@@ -99,7 +99,7 @@ pipeline {
         }
 
         stage('🚀 Deploy Application') {
-            // ACTIVADO. SSH al backend, pull image fresca de Docker Hub, recrear container.
+            // ACTIVADO.. SSH al backend, pull image fresca de Docker Hub, recrear container.
             // Solo corre si los stages anteriores pasaron (Tests + Sonar + QualityGate + BuildImage).
             steps {
                 sshagent(credentials: ["${SSH_CRED_ID}"]) {
