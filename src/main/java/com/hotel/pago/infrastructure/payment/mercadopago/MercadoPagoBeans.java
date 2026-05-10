@@ -36,6 +36,9 @@ public class MercadoPagoBeans {
     @Value("${mercadopago.use-sandbox:false}")
     private boolean useSandbox;
 
+    @Value("${mercadopago.webhook.trust-payload-in-sandbox:false}")
+    private boolean trustPayloadInSandbox;
+
     @PostConstruct
     public void init() {
         if (accessToken == null || accessToken.isBlank() || accessToken.contains("REPLACE_ME")) {
@@ -49,6 +52,6 @@ public class MercadoPagoBeans {
 
     @Bean
     public PaymentGateway paymentGateway(ObjectMapper objectMapper) {
-        return new MercadoPagoGateway(webhookSecret, notificationUrl, useSandbox, objectMapper);
+        return new MercadoPagoGateway(webhookSecret, notificationUrl, useSandbox, trustPayloadInSandbox, objectMapper);
     }
 }
